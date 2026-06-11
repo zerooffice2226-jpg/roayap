@@ -1,0 +1,233 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Partner {
+  id         String        @id @default(uuid())
+  name       String
+  email      String?       @unique
+  phone      String?
+  type       PartnerType   @default(CUSTOMER)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  moveLines  JournalLine[]
+  invoices   Invoice[]
+  stockMoves StockMove[]
+  cheques    Cheque[]
+}
+
+enum PartnerType {
+  CUSTOMER
+  VENDOR
+  BOTH
+}
+
+model Product {
+  id               String         @id @default(uuid())
+  name             String
+  sku              String         @unique
+  salePrice        Float
+  costPrice        Float
+  incomeAccountId  String
+  expenseAccountId String
+  invoiceLines     InvoiceLine[]
+  stockBalances    ProductStock[]
+  stockMoves       StockMove[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+}
+
+model Warehouse {
+  id              String         @id @default(uuid())
+  name            String
+  code            String         @unique
+  location        String?
+  stockQuantities ProductStock[]
+  stockMovesSrc   StockMove[]    @relation("SourceWarehouse")
+  stockMovesDest  StockMove[]    @relation("DestWarehouse")
+  createdAt       DateTime       @default(now())
+}
+
+model ProductStock {
+  id          String    @id @default(uuid())
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  quantity    Int       @default(0)
+
+  @@unique([productId, warehouseId])
+}
+
+model Account {
+  id             String        @id @default(uuid())
+  code           String        @unique
+  name           String
+  type           AccountType
+  currentBalance Float         @default(0.0)
+  parentId       String?
+  parent         Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children       Account[]     @relation("AccountHierarchy")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  moveLines      JournalLine[]
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model Journal {
+  id        String        @id @default(uuid())
+  name      String
+  code      String        @unique
+  type      JournalType
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  moves     JournalMove[]
+}
+
+enum JournalType {
+  SALE
+  PURCHASE
+  CASH
+  BANK
+  GENERAL
+}
+
+model JournalMove {
+  id        String        @id @default(uuid())
+  name      String        @unique
+  date      DateTime      @default(now())
+  ref       String?
+  state     MoveState     @default(DRAFT)
+  journalId String
+  journal   Journal       @relation(fields: [journalId], references: [id])
+  lines     JournalLine[]
+  invoice   Invoice?
+  cheque    Cheque?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+enum MoveState {
+  DRAFT
+  POSTED
+}
+
+model JournalLine {
+  id        String      @id @default(uuid())
+  name      String
+  debit     Float       @default(0.0)
+  credit    Float       @default(0.0)
+  balance   Float
+  moveId    String
+  move      JournalMove @relation(fields: [moveId], references: [id], onDelete: Cascade)
+  accountId String
+  account   Account     @relation(fields: [accountId], references: [id])
+  partnerId String?
+  partner   Partner?    @relation(fields: [partnerId], references: [id])
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  number        String        @unique
+  type          InvoiceType
+  date          DateTime      @default(now())
+  dueDate       DateTime
+  state         InvoiceState  @default(DRAFT)
+  partnerId     String
+  partner       Partner       @relation(fields: [partnerId], references: [id])
+  lines         InvoiceLine[]
+  journalMoveId String?       @unique
+  journalMove   JournalMove?  @relation(fields: [journalMoveId], references: [id])
+  totalAmount   Float         @default(0.0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+enum InvoiceType {
+  OUT_INVOICE
+  IN_INVOICE
+}
+
+enum InvoiceState {
+  DRAFT
+  POSTED
+  PAID
+  CANCELLED
+}
+
+model InvoiceLine {
+  id        String  @id @default(uuid())
+  quantity  Int
+  priceUnit Float
+  discount  Float   @default(0.0)
+  subtotal  Float
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model StockMove {
+  id                String        @id @default(uuid())
+  reference         String
+  type              StockMoveType
+  quantity          Int
+  unitCost          Float
+  date              DateTime      @default(now())
+  productId         String
+  product           Product       @relation(fields: [productId], references: [id])
+  sourceWarehouseId String?
+  sourceWarehouse   Warehouse?    @relation("SourceWarehouse", fields: [sourceWarehouseId], references: [id])
+  destWarehouseId   String?
+  destWarehouse     Warehouse?    @relation("DestWarehouse", fields: [destWarehouseId], references: [id])
+  partnerId         String?
+  partner           Partner?      @relation(fields: [partnerId], references: [id])
+}
+
+enum StockMoveType {
+  INCOMING
+  OUTGOING
+  INTERNAL
+}
+
+model Cheque {
+  id            String       @id @default(uuid())
+  number        String
+  bankName      String
+  amount        Float
+  dueDate       DateTime
+  type          ChequeType
+  state         ChequeState  @default(PENDING)
+  partnerId     String
+  partner       Partner      @relation(fields: [partnerId], references: [id])
+  journalMoveId String?      @unique
+  journalMove   JournalMove? @relation(fields: [journalMoveId], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+enum ChequeType {
+  RECEIPT
+  PAYMENT
+}
+
+enum ChequeState {
+  PENDING
+  CLEARED
+  REJECTED
+}
