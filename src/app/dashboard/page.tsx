@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation"
 import { 
   Home, ShoppingCart, ShoppingBag, Landmark, Scale, Box, Users, Settings,
   FileText, PlusCircle, Zap, CreditCard, Wallet, FileCheck2, PackagePlus,
-  ClipboardList, DollarSign, ArrowRight, Undo2, Warehouse, FileSpreadsheet
+  ClipboardList, DollarSign, ArrowRight, Undo2, Warehouse, FileSpreadsheet, BookUser
 } from "lucide-react"
 
 // Updated and reordered MODULES_DATA
@@ -18,7 +18,7 @@ const MODULES_DATA: any = {
       { href: "/dashboard/products/new", label: "إضافة بطاقة صنف وتوجيهه ماليًا", icon: PlusCircle },
       { href: "/dashboard/products/bulk-import", label: "رفع الأصناف بالإكسيل (Bulk Import)", icon: FileSpreadsheet },
       { href: "/dashboard/products/inventory-move", label: "تسجيل إذن حركة مخزن (جرد)", icon: PackagePlus },
-      { href: "/dashboard/products/ledger", label: "بطاقة وحركة الصنف المخزني تفصيلي", icon: Box },
+      { href: "/dashboard/products/ledger", label: "بطاقة وحركة الصنف المخزni تفصيلي", icon: Box },
       { href: "/dashboard/products/warehouses", label: "إدارة وتأسيس الفروع والمخازن", icon: Warehouse } // تأكد من إضافة هذا السطر بدقة
     ]
   },
@@ -30,7 +30,8 @@ const MODULES_DATA: any = {
       { href: "/dashboard/invoicing/new", label: "إنشاء فاتورة مبيعات جديدة", icon: PlusCircle },
       { href: "/dashboard/pos", label: "شاشة الكاشير السريعة (POS)", icon: Zap, isSpecial: true },
       { href: "/dashboard/invoicing/sales-return", label: "مردودات ومسترجعات المبيعات", icon: Undo2 },
-      { href: "/dashboard/partners", label: "إدارة وبطاقات العملاء (CRM)", icon: Users } // Smart repetition
+      { href: "/dashboard/partners", label: "إدارة وبطاقات العملاء (CRM)", icon: Users }, // Smart repetition
+      { href: "/dashboard/partners/ledger", label: "تقرير حركة العملاء", icon: Users }
     ]
   },
   vendors: {
@@ -38,6 +39,7 @@ const MODULES_DATA: any = {
     description: "فواتير المشتريات، سداد الدائنين، مرتجع الموردين، وقاعدة الموردين",
     subItems: [
       { href: "/dashboard/invoicing/purchase", label: "تسجيل فاتورة مشتريات واردة", icon: PlusCircle },
+      { href: "/dashboard/partners/vendor-ledger", label: "كشف حساب الموردين", icon: BookUser },
       { href: "/dashboard/invoicing/vendor-payments", label: "سداد وتسوية فواتير الموردين", icon: CreditCard },
       { href: "/dashboard/invoicing/purchase-return", label: "مردودات وإرجاع المشتريات", icon: Undo2 },
       { href: "/dashboard/partners", label: "إدارة وتصنيفات الموردين", icon: Users } // Smart repetition
@@ -47,9 +49,10 @@ const MODULES_DATA: any = {
     label: "الخزائن والأوراق المالية",
     description: "سندات القبض والصرف، محفظة الشيكات، والتسوية البنكية وحركات الخزن",
     subItems: [
+      { href: "/dashboard/accounting/cash-receipt", label: "سندات القبض والصرف (Wizard)", icon: CreditCard },
       { href: "/dashboard/receipts", label: "سندات الصرف والقبض المباشر", icon: Wallet },
       { href: "/dashboard/receipts/cheques", label: "حافظة الشيكات والمقاصة", icon: FileCheck2 },
-      { href: "/dashboard/settings/cash-bank", label: "إضافة خزن وبنوك جديدة", icon: PlusCircle },
+      { href: "/dashboard/accounting/cash-register/new", label: "إضافة خزن وبنوك جديدة", icon: PlusCircle },
       { href: "/dashboard/receipts/bank-reconciliation", label: "تسوية ومطابقة البنوك", icon: Landmark },
       { href: "/dashboard/receipts/ledger", label: "دفتر أستاذ النقدية وحركة الخزن", icon: Wallet }
     ]

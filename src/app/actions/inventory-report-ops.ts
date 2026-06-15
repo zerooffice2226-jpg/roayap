@@ -6,29 +6,39 @@ export async function getInventorySummaryReport() {
   try {
     const products = await prisma.product.findMany({
       include: {
-        stockBalances: true // جلب رصيد الصنف في كل مخزن
+        stockMoves: true // الاعتماد الكلي على سجل الحركات التاريخية الفعلي لضمان النزاهة
       },
       orderBy: { name: 'asc' }
     });
 
-    // إعادة هيكلة البيانات لحساب الإجماليات والقيمة المالية
     const reportData = products.map(prod => {
-      // حساب إجمالي الكمية المتوفرة عبر كافة المستودعات المتعددة
-      const totalQty = prod.stockBalances.reduce((sum, sb) => sum + sb.quantity, 0);
-      
+      // 1. حساب إجمالي الكميات الواردة المعتمدة
+      const totalIncoming = prod.stockMoves
+        .filter(move => move.type === "INCOMING")
+        .reduce((sum, move) => sum + move.quantity, 0);
+
+      // 2. حساب إجمالي الكميات المنصرفة المعتمدة
+      const totalOutgoing = prod.stockMoves
+        .filter(move => move.type === "OUTGOING")
+        .reduce((sum, move) => sum + move.quantity, 0);
+
+      // 3. 💡 المعادلة الذهبية المحكمة: الرصيد الجاري الحالي = (إجمالي الوارد - إجمالي المنصرف)
+      const currentBalance = totalIncoming - totalOutgoing;
+
       return {
         id: prod.id,
         sku: prod.sku,
         name: prod.name,
-        totalQuantity: totalQty,
+        incomingQty: totalIncoming,
+        outgoingQty: totalOutgoing,
+        totalQuantity: currentBalance, // الرصيد الصافي الموزون رياضياً مئة بالمئة
         costPrice: prod.costPrice,
         salePrice: prod.salePrice,
-        // القيمة المالية للمخزون = إجمالي الكمية × تكلفة الشراء القياسية
-        stockValue: totalQty * prod.costPrice
+        stockValue: currentBalance * prod.costPrice // القيمة المالية للمخزون الجاري
       };
     });
 
-    // حساب الإجمالي الكلي للمستودعات لتقديمه في كروت مؤشرات علوية للتقرير
+    // كروت المؤشرات العلوية
     const totalItemsInStock = reportData.reduce((sum, item) => sum + item.totalQuantity, 0);
     const totalInventoryValue = reportData.reduce((sum, item) => sum + item.stockValue, 0);
 
@@ -39,6 +49,6 @@ export async function getInventorySummaryReport() {
       totalInventoryValue
     };
   } catch (error) {
-    throw new Error("فشل في استخراج تقرير جرد المستودعات المجمع");
+    throw new Error("فشل في استخراج تقرير جرد المستودعات التجميعي المطور");
   }
 }

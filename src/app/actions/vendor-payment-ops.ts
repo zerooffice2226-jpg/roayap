@@ -2,85 +2,109 @@
 "use server"
 import { prisma } from "@/lib/prisma"
 
-interface VendorPaymentPayload {
-  invoiceId: string;
-  amountPaid: number;
-  bankAccountId: string;     // حساب البنك/الخزينة الذي خرجت منه الأموال
-  cashierJournalId: string;  // دفتر يومية البنك أو النقدية المستخدم
-}
-
-export async function processVendorBillPayment({ invoiceId, amountPaid, bankAccountId, cashierJournalId }: VendorPaymentPayload) {
+// 1. جلب الفواتير المعتمدة حياً مع فحص هل سُدد منها جزء سابقاً
+export async function getUnpaidVendorBills() {
   try {
-  return await prisma.$transaction(async (tx) => {
-    
-    // 1. جلب فاتورة المشتريات مع بيانات المورد
-    const bill = await tx.invoice.findUnique({
-      where: { id: invoiceId },
-      include: { partner: true }
-    });
-
-    if (!bill) throw new Error("فاتورة المشتريات غير موجودة");
-    if (bill.type !== "IN_INVOICE") throw new Error("المستند المحدد ليس فاتورة مشتريات");
-    if (bill.state === "PAID") {
-      throw new Error("يمكن فقط سداد الفواتير الموردة المعتمدة وغير المدفوعة بالكامل");
-    }
-
-    // 2. إنشاء قيد السداد (سند صرف للمورد) تلقائياً بنظام سيريال أودو
-    const currentYear = new Date().getFullYear();
-    const payMove = await tx.journalMove.create({
-      data: {
-        name: `VPA/${bill.partner.name.substring(0,3).toUpperCase()}/${currentYear}/${Math.floor(1000 + Math.random() * 9000)}`,
-        journalId: cashierJournalId,
+    const bills = await prisma.invoice.findMany({
+      where: {
+        type: "IN_INVOICE",
         state: "POSTED",
-        ref: `سداد الدفعة المستحقة لفاتورة المشتريات رقم ${bill.number}`
-      }
+        totalAmount: { gt: 0 } // جلب الفواتير التي لا تزال تحمل مديونية
+      },
+      include: {
+        partner: true
+      },
+      orderBy: { date: 'desc' }
     });
 
-    // 3. بناء أسطر القيد المزدوج: الخصوم (المورد) تقل في المدين، والأصول (البنك) تقل في الدائن
-    const vendorAccountId = "210101"; // حساب الموردين/الدائنون
-
-    // السطر الأول: حساب الموردين/الدائنون (مدين DEBIT - لتقليص الالتزامات والمديونية المترتبة علينا)
-    await tx.journalLine.create({
-      data: {
-        name: `تسوية وإغلاق مديونية المورد عن فاتورة ${bill.number}`,
-        debit: amountPaid,
-        credit: 0,
-        balance: amountPaid,
-        moveId: payMove.id,
-        accountId: vendorAccountId,
-        partnerId: bill.partnerId
-      }
+    // جلب كافة قيود الصرف المالي المسجلة بالفترات السابقة لتحديد الفواتير المسددة جزئياً
+    const allPaymentMoves = await prisma.journalMove.findMany({
+      where: { name: { startsWith: "PAY/" } }
     });
 
-    // السطر الثاني: حساب البنك/الخزينة (دائن CREDIT - خرجت منه الأموال ونقص الأصل السائل)
-    await tx.journalLine.create({
-      data: {
-        name: `خروج كاش لسداد المورد - فاتورة ${bill.number}`,
-        debit: 0,
-        credit: amountPaid,
-        balance: -amountPaid,
-        moveId: payMove.id,
-        accountId: bankAccountId,
-        partnerId: bill.partnerId
-      }
+    return bills.map(b => {
+      // فحص هل يوجد أي قيد مالي صرف يشير لرقم هذه الفاتورة بالـ Reference
+      const hasHistory = allPaymentMoves.some(move => move.ref?.includes(b.number));
+
+      return {
+        id: b.id,
+        number: b.number,
+        partnerName: b.partner?.name || "مورد نقدي معتمد",
+        date: b.date ? b.date.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        totalAmount: b.totalAmount,
+        amountDue: b.totalAmount, // المبلغ المتبقي المستحق
+        isPartialPaid: hasHistory // 💡 علامة ذكية لتلوين الفاتورة المسددة جزئياً بصرياً
+      };
     });
-
-    // 4. التحديث اللحظي الصارم للأرصدة الجارية داخل دليل الحسابات
-    await tx.account.update({ where: { code: vendorAccountId }, data: { currentBalance: { decrement: amountPaid } } }); 
-    await tx.account.update({ where: { code: bankAccountId }, data: { currentBalance: { decrement: amountPaid } } });
-
-    // 5. تغيير حالة الفاتورة إلى مدفوعة بالكامل (PAID) في حال تغطية القيمة
-    const updatedState = amountPaid >= bill.totalAmount ? "PAID" : "POSTED";
-    
-    await tx.invoice.update({
-      where: { id: invoiceId },
-      data: { state: updatedState }
-    });
-
-    return { success: true, paymentMoveName: payMove.name, status: updatedState };
-  });
-} catch (e) {
-    return { success: false, status: "DRAFT" };
+  } catch (error) {
+    throw new Error("فشل في جلب مستندات مديونيات الموردين");
+  }
 }
 
+// 2. معالجة السداد وتثبيت الدفعة داخل الـ JournalMove لتعمل كـ سجل History
+export async function processVendorPayment(data: { billId: string, paymentAmount: number, accountCode: string }) {
+  return await prisma.$transaction(async (tx) => {
+    const bill = await tx.invoice.findUnique({ where: { id: data.billId } });
+    if (!bill) throw new Error("الفاتورة غير موجودة بالدفاتر");
+
+    const currentDue = bill.totalAmount;
+    if (data.paymentAmount > currentDue) throw new Error("المبلغ المدخل أكبر من قيمة المستحق");
+
+    const newDue = currentDue - data.paymentAmount;
+
+    // تحديث المتبقي من الفاتورة سحابياً
+    await tx.invoice.update({
+      where: { id: data.billId },
+      data: { totalAmount: newDue }
+    });
+
+    let journal = await tx.journal.findFirst({ where: { type: "BANK" } });
+    if (!journal) journal = await tx.journal.create({ data: { name: "دفتر صرف النقدية", code: "PAY", type: "BANK" } });
+
+    const sequenceCode = `PAY/${new Date().getFullYear()}/${Math.floor(1000 + Math.random() * 9000)}`;
+    
+    // 💡 إنشاء حركة قيد الصرف النقدي لتسجيلها كتاريخ أبدي مثبت للفاتورة
+    await tx.journalMove.create({
+      data: {
+        name: sequenceCode,
+        journalId: journal.id,
+        state: "POSTED",
+        date: new Date(),
+        // نضع مبلغ الصرف واسم الحساب داخل النص ليقوم الكود بقراءته وعرضه بالـ History
+        ref: `مبلغ:${data.paymentAmount}|حساب:${data.accountCode}|مستند:${bill.number}`
+      }
+    });
+
+    return { success: true, remaining: newDue };
+  });
+}
+
+// 3. 💡 تابع الجلب الذكي المضاف لاستخراج سجل الدفعات النقدية السابقة للفاتورة
+export async function getBillPaymentHistory(billNumber: string) {
+  try {
+    const moves = await prisma.journalMove.findMany({
+      where: {
+        name: { startsWith: "PAY/" },
+        ref: { contains: billNumber }
+      },
+      orderBy: { date: 'desc' }
+    });
+
+    return moves.map(m => {
+      // تفكيك النص المستخرج واستخراج الأرقام الحقيقية
+      const parts = m.ref?.split('|') || [];
+      const amtPart = parts.find(p => p.startsWith("مبلغ:"))?.split(':')[1] || "0";
+      const accPart = parts.find(p => p.startsWith("حساب:"))?.split(':')[1] || "—";
+
+      return {
+        id: m.id,
+        code: m.name,
+        date: m.date.toISOString().split('T')[0],
+        amount: parseFloat(amtPart),
+        account: accPart === "110102" ? "بنك مصر الجاري" : "خزينة كاش الرئيسية"
+      };
+    });
+  } catch (error) {
+    return [];
+  }
 }

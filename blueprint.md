@@ -28,43 +28,46 @@ The project follows a standard Next.js App Router structure, with a key modifica
 ### 2. **Inventory Management**
 - **Product Catalog:** Central repository for products, including financial account links (income/expense).
 - **Automated Stock Moves:** Real-time inventory updates based on sales and purchases, fully integrated with the accounting engine.
+- **Negative Stock Policy:** Emulated Odoo's "Allow Negative Stock" policy by modifying the sales action (`src/app/actions/invoicing-ops.ts`). It now uses a `productStock.upsert` operation. This ensures that if a product is sold without an existing stock record in a warehouse, a new record is created instantly with a negative quantity, preventing transaction failures and accurately reflecting the stock deficit.
 
 ### 3. **Sales & Purchasing**
 - **Full Transaction Lifecycle:** Manage the entire flow from draft invoices/bills to posted entries and final payment reconciliation.
 
 ## Implemented Features
 
-### **Invoice Management UI**
+### **Advanced Invoicing UI & Workflow**
 
-A user interface to interact with and test the advanced accounting engines has been successfully implemented.
+The entire invoicing user interface has been rebuilt to be a comprehensive, intuitive, and feature-rich single-page application, located at `src/app/dashboard/invoicing/new/page.tsx`.
 
-*   **Invoice Dashboard Page (`src/app/dashboard/invoicing/page.tsx`):** Displays a list of all invoices with their current status (`Draft`, `Posted`, `Paid`, `Cancelled`).
-*   **Action Components:** Interactive client components for key actions:
-    *   **Post Invoice:** A button for `Draft` invoices that calls the `postInvoice` server action.
-    *   **Register Payment:** A modal/form for `Posted` invoices to process payments via the `processInvoicePayment` action.
-    *   **Reverse Entry:** A button for `Posted` or `Paid` invoices that triggers the `reverseJournalMove` action to create a credit note.
-*   **Dynamic UI:** The UI conditionally renders available actions based on the invoice's state, providing an intuitive user workflow.
-*   **Navigation:** A link to the "Invoicing" page has been added to the main sidebar (`src/app/components/SideNav.tsx`).
+*   **Reliable Invoice Printing:** Solved the critical "blank page" issue during printing.
+    *   **Root Cause:** The global print CSS was hiding all `<form>` elements, which inadvertently included the entire application layout.
+    *   **Solution:** The UI was architecturally refactored. The interactive web view is now isolated within a `div#erp-web-view`, and the printable invoice sheet is in a separate `div#erp-invoice-print-sheet`. A new, precise `@media print` stylesheet explicitly hides the web view and forces the invoice sheet to be visible, guaranteeing a complete and accurate printout every time.
+
+*   **Persistent Warehouse Selection:** The "New Invoice" page now remembers the user's last selected warehouse.
+    *   **Implementation:** The selected warehouse ID is saved to `localStorage` (`erp_default_warehouse`) and is automatically loaded when the page is revisited, streamlining the invoicing process.
+
+*   **Dynamic UI Enhancements:** Added various user experience improvements:
+    *   **Smart Keyboard Navigation:** Use `Enter` to select a searched product and `ArrowDown` in the last invoice line to automatically create a new one.
+    *   **Automatic Merging:** If a product is added to an invoice where it already exists (in the same warehouse), the quantities are automatically merged into a single line.
+    *   **Context-Aware Creation:** "Create New Product" and "Create New Customer" buttons now save the current context, redirect to the creation form, and return the user to the invoice with the new data pre-filled.
 
 ### **Build Issue Resolution**
 
-*   **Problem:** The Next.js build process was failing due to the use of the `useSearchParams()` hook within components that were being prerendered as static pages. This is a common issue in Next.js when a client-side hook is used in a component that is part of a statically generated page.
+*   **Problem:** The Next.js build process was failing due to the use of the `useSearchParams()` hook within components that were being prerendered as static pages.
 *   **Solution:** The issue was resolved by wrapping the components that use `useSearchParams()` in a `<Suspense>` boundary. This allows Next.js to render a fallback UI while the client-side components are being loaded, thus avoiding the build error.
-    *   In `src/app/layout.tsx`, the `<SideNav />` component was wrapped in `<Suspense>`.
-    *   In `src/app/dashboard/layout.tsx`, the `{children}` were wrapped in `<Suspense>` to protect all dashboard pages.
 
 ---
 
-## Current Plan: Refine and Test
+## Current Plan: Final Testing
 
-**Objective:** To thoroughly test the implemented features and refine the user experience.
+**Objective:** To thoroughly test the newly implemented features and confirm system stability.
 
 **Next Steps:**
-1.  **Create Test Data:** Populate the database with a variety of invoices in different states to test all UI and server action scenarios.
-2.  **End-to-End Testing:** Perform a complete walkthrough of the invoice lifecycle:
+1.  **End-to-End Testing:** Perform a complete walkthrough of the invoice lifecycle:
     *   Create a `Draft` invoice.
     *   `Post` the invoice and verify the journal entries.
     *   `Register Payment` and confirm the invoice status changes to `Paid`.
     *   `Reverse` a `Paid` invoice and check the generated credit note.
-3.  **UI/UX Review:** Review the dashboard for clarity, ease of use, and visual appeal. Make adjustments as needed.
-4.  **Error Handling:** Intentionally trigger errors (e.g., trying to pay an unpaid invoice) to ensure the system provides clear feedback.
+2.  **Test Negative Stock:** Create sales for products with no initial inventory and verify that negative `ProductStock` records are created correctly.
+3.  **Test Printing:** Verify the invoice printing functionality across different scenarios, ensuring the printout is never blank and always reflects the current data.
+4.  **UI/UX Review:** Review the dashboard for clarity, ease of use, and visual appeal.

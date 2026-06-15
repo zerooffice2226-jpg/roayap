@@ -2,166 +2,256 @@
 "use server"
 import { prisma } from "@/lib/prisma"
 
-interface InvoiceInput {
-  partnerId: string;
-  dueDate: string;
-  warehouseId: string;
-  items: { productId: string; quantity: number; priceUnit: number; warehouseId?: string; }[];
-}
-
-export async function createAndPostInvoice(data: InvoiceInput) {
+export async function createAndPostInvoice(data: any) {
   return await prisma.$transaction(async (tx) => {
-    const currentYear = new Date().getFullYear();
     const today = new Date();
+    const currentYear = today.getFullYear();
 
-    // 1. جلب دفتر يومية المبيعات أو تأسيسه تلقائياً فوراً لمنع التعطل
-    let journal = await tx.journal.findFirst({ where: { type: "SALE" } });
-    if (!journal) {
-      journal = await tx.journal.create({
-        data: { name: "دفتر يومية المبيعات العمومية", code: "INV", type: "SALE" }
-      });
-    }
-
-    // 2. جلب الحسابات التوجيهية وتأسيسها تلقائياً إذا نقصت في الدليل
-    let customerAccount = await tx.account.findUnique({ where: { code: "110201" } }); // حساب العملاء
-    if (!customerAccount) {
-      customerAccount = await tx.account.create({
-        data: { code: "110201", name: "حساب ذمم العملاء (المدينون)", type: "ASSET" }
-      });
-    }
-
-    let invAccount = await tx.account.findUnique({ where: { code: "110401" } }); // حساب المخزن
-    if (!invAccount) {
-      invAccount = await tx.account.create({
-        data: { code: "110401", name: "حساب مخزن بضائع بغرض البيع", type: "ASSET" }
-      });
-    }
-
-    let salesAccount = await tx.account.findUnique({ where: { code: "410101" } }); // حساب المبيعات
-    if (!salesAccount) {
-        salesAccount = await tx.account.create({
-            data: { code: "410101", name: "إيرادات المبيعات العامة", type: "INCOME" }
-        });
-    }
-
-    let cogsAccount = await tx.account.findUnique({ where: { code: "510101" } }); // حساب تكلفة البضاعة
-    if (!cogsAccount) {
-        cogsAccount = await tx.account.create({
-            data: { code: "510101", name: "تكلفة البضاعة المباعة", type: "EXPENSE" }
-        });
-    }
-
-    // 3. توليد الرقم التسلسلي للفاتورة
-    const prefix = `${journal.code}/${currentYear}/`;
-    const lastInvoice = await tx.journalMove.findFirst({
-      where: { journalId: journal.id, name: { startsWith: prefix } },
-      orderBy: { name: 'desc' },
-      select: { name: true }
-    });
-    let nextNum = 1;
-    if (lastInvoice) {
-      const parts = lastInvoice.name.split('/');
-      nextNum = parseInt(parts[parts.length - 1], 10) + 1;
-    }
-    const sequenceName = `${prefix}${String(nextNum).padStart(4, '0')}`;
-
-    // 4. إنشاء رأس القيد المحاسبي (Journal Move)
-    const journalMove = await tx.journalMove.create({
-      data: {
-        name: sequenceName,
-        journalId: journal.id,
-        state: "POSTED",
-        date: today,
-        ref: `فاتورة مبيعات رقم ${sequenceName}`
-      }
-    });
-
-    // 5. حساب الإجمالي وتجهيز بنود الفاتورة
+    // 1. حساب الإجمالي وتجهيز البنود
     let totalAmount = 0;
-    const invoiceLinesData = data.items.map(item => {
+    const invoiceLines = data.items.map((item: any) => {
       const subtotal = item.quantity * item.priceUnit;
       totalAmount += subtotal;
-      return {
-        productId: item.productId,
-        quantity: item.quantity,
-        priceUnit: item.priceUnit,
-        subtotal: subtotal
-      };
+      return { productId: item.productId, quantity: item.quantity, priceUnit: item.priceUnit, subtotal };
     });
 
-    // 6. إنشاء الفاتورة وربطها بالقيد
-    await tx.invoice.create({
-      data: {
-        number: sequenceName,
-        type: "OUT_INVOICE",
-        date: today,
-        dueDate: new Date(data.dueDate),
-        state: "POSTED",
-        partnerId: data.partnerId,
-        totalAmount: totalAmount,
-        journalMoveId: journalMove.id,
-        lines: { create: invoiceLinesData }
-      }
-    });
+    let journal = await tx.journal.findFirst({ where: { type: "SALE" } });
+    if (!journal) {
+      journal = await tx.journal.create({ 
+        data: { name: "دفتر المبيعات العمومية", code: "INV", type: "SALE" } 
+      });
+    }
 
-    // 7. إنشاء قيود اليومية المالية التفصيلية (Journal Lines)
-    await tx.journalLine.create({
-      data: { name: `استحقاق على عميل لفاتورة ${sequenceName}`, debit: totalAmount, credit: 0, balance: totalAmount, moveId: journalMove.id, accountId: customerAccount.id, partnerId: data.partnerId }
-    });
-    await tx.journalLine.create({
-      data: { name: `إيراد مبيعات فاتورة ${sequenceName}`, debit: 0, credit: totalAmount, balance: -totalAmount, moveId: journalMove.id, accountId: salesAccount.id }
-    });
+    let sequenceName = data.existingNumber;
+    let journalMoveId;
 
-    let totalCost = 0;
+    // 2. معالجة حالة التعديل (تنظيف الأثر المخزني والمالي القديم)
+    if (data.existingNumber) {
+      const oldInv = await tx.invoice.findFirst({ 
+        where: { number: data.existingNumber }, 
+        include: { lines: true } 
+      });
 
-    // 8. معالجة المخزون (خصم الكميات) وتكلفة البضاعة
-    for (const item of data.items) {
-      const product = await tx.product.findUnique({ where: { id: item.productId } });
-      if (!product) throw new Error(`المنتج بالمعرف ${item.productId} غير موجود`);
-
-      const warehouseToUse = item.warehouseId || data.warehouseId;
-
-      await tx.productStock.updateMany({
-        where: {
-          productId: item.productId,
-          warehouseId: warehouseToUse
-        },
-        data: {
-          quantity: { decrement: item.quantity }
+      if (oldInv) {
+        // أ) إرجاع كميات المخزن القديمة
+        for (const line of oldInv.lines) {
+          const relatedMove = await tx.stockMove.findFirst({ 
+            where: { reference: data.existingNumber, productId: line.productId } 
+          });
+          const whId = relatedMove?.sourceWarehouseId || data.warehouseId || "w-main";
+          await tx.productStock.updateMany({
+            where: { productId: line.productId, warehouseId: whId },
+            data: { quantity: { increment: line.quantity } }
+          });
         }
+
+        // ب) محاسبياً: تنظيف قيد الكاش القديم وعكس أثره من رصيد الحساب قبل حذفه
+        const oldCashMoveName = `CASH/${data.existingNumber}`;
+        const oldCashMove = await tx.journalMove.findFirst({
+          where: { name: oldCashMoveName },
+          include: { lines: true }
+        });
+
+        if (oldCashMove) {
+          // جلب سطر المدين (الخزينة) لعكس رصيده
+          const oldCashLine = oldCashMove.lines.find(l => l.debit > 0);
+          if (oldCashLine) {
+            await tx.account.update({
+              where: { id: oldCashLine.accountId },
+              data: { currentBalance: { decrement: oldCashLine.debit } } // خصم المبلغ القديم لحماية الحساب
+            });
+          }
+          // حذف قيد الكاش القديم سطوراً وحركة
+          await tx.journalMove.delete({ where: { id: oldCashMove.id } });
+        }
+
+        // ج) حذف حركات المخزن وسطور الفاتورة القديمة
+        await tx.stockMove.deleteMany({ where: { reference: data.existingNumber } });
+        await tx.invoiceLine.deleteMany({ where: { invoiceId: oldInv.id } });
+        journalMoveId = oldInv.journalMoveId;
+      }
+    } else {
+      // إنشاء سيريال جديد لفاتورة جديدة
+      const prefix = `${journal.code}/${currentYear}/`;
+      const lastInv = await tx.journalMove.findFirst({ 
+        where: { journalId: journal.id, name: { startsWith: prefix } }, 
+        orderBy: { name: 'desc' } 
+      });
+      let nextNum = lastInv ? parseInt(lastInv.name.split('/')[2]) + 1 : 1;
+      sequenceName = `${prefix}${String(nextNum).padStart(4, '0')}`;
+
+      const journalMove = await tx.journalMove.create({
+        data: { name: sequenceName, journalId: journal.id, state: "POSTED", date: today, ref: `فاتورة مبيعات رقم ${sequenceName}` }
+      });
+      journalMoveId = journalMove.id;
+    }
+
+    // 3. تحديث أو إنشاء الفاتورة
+    let invoice;
+    if (data.existingNumber) {
+      const existingBill = await tx.invoice.findFirst({ where: { number: sequenceName } });
+      if (!existingBill) throw new Error("المستند المراد تعديله غير موجود بالدفاتر");
+
+      invoice = await tx.invoice.update({
+        where: { id: existingBill.id },
+        data: {
+          totalAmount,
+          dueDate: new Date(data.dueDate),
+          partnerId: data.partnerId,
+          lines: { create: invoiceLines }
+        },
+      });
+    } else {
+      invoice = await tx.invoice.create({
+        data: {
+          number: sequenceName,
+          type: "OUT_INVOICE",
+          date: today,
+          dueDate: new Date(data.dueDate),
+          state: "POSTED",
+          partnerId: data.partnerId,
+          totalAmount,
+          journalMoveId: journalMoveId,
+          lines: { create: invoiceLines }
+        }
+      });
+    }
+
+    // 4. إنشاء قيد اليومية المالي النقدي الجديد (موزون ومطابق للمخطط)
+    if (data.cashAccountId && totalAmount > 0) {
+      const cashJournal = await tx.journal.findFirst({ where: { type: "CASH" } });
+      if (cashJournal) {
+        let revenueAccount = await tx.account.findFirst({
+          where: { OR: [{ name: { contains: "إيراد" } }, { code: { startsWith: "4" } }] }
+        });
+        
+        if (!revenueAccount) throw new Error("حساب الإيرادات والمبيعات غير معرف في شجرة الحسابات");
+
+        // إنشاء قيد الكاش الجديد مع حقل balance الإجباري (Debit - Credit)
+        await tx.journalMove.create({
+          data: {
+            name: `CASH/${sequenceName}`,
+            journalId: cashJournal.id,
+            state: "POSTED",
+            date: today,
+            ref: `تحصيل نقدي للفاتورة ${sequenceName} | مبلغ:${totalAmount}`,
+            lines: {
+              create: [
+                {
+                  name: `استلام نقدي - فاتورة ${sequenceName}`,
+                  accountId: data.cashAccountId,
+                  debit: totalAmount,
+                  credit: 0,
+                  balance: totalAmount // ✅ حقل مدين موجب
+                },
+                {
+                  name: `إيراد مبيعات - فاتورة ${sequenceName}`,
+                  accountId: revenueAccount.id,
+                  credit: totalAmount,
+                  debit: 0,
+                  balance: -totalAmount // ✅ حقل دائن سالب ليتزن القيد
+                }
+              ]
+            }
+          }
+        });
+
+        // زيادة رصيد الخزينة الحالي بالصافي الجديد حياً
+        await tx.account.update({
+          where: { id: data.cashAccountId },
+          data: { currentBalance: { increment: totalAmount } }
+        });
+      }
+    }
+
+    // 5. خصم كميات المخزن الجديدة وتوليد حركات المخزن
+    for (const item of data.items) {
+      const targetWarehouse = data.warehouseId || "w-main";
+      await tx.productStock.upsert({
+        where: { productId_warehouseId: { productId: item.productId, warehouseId: targetWarehouse } },
+        update: { quantity: { decrement: item.quantity } },
+        create: { productId: item.productId, warehouseId: targetWarehouse, quantity: -item.quantity }
       });
 
       await tx.stockMove.create({
-          data: {
-            reference: sequenceName,
-            type: "OUTGOING",
-            quantity: item.quantity,
-            unitCost: product.costPrice,
-            productId: product.id,
-            sourceWarehouseId: warehouseToUse, 
-            partnerId: data.partnerId
-          }
+        data: {
+          reference: sequenceName,
+          type: "OUTGOING",
+          quantity: item.quantity,
+          unitCost: 0,
+          productId: item.productId,
+          sourceWarehouseId: targetWarehouse,
+          partnerId: data.partnerId
+        }
       });
-
-      const itemCost = item.quantity * product.costPrice;
-      totalCost += itemCost;
     }
 
-    // قيد تكلفة البضاعة المباعة (COGS)
-    await tx.journalLine.create({
-      data: { name: `تكلفة البضاعة المباعة لفاتورة ${sequenceName}`, debit: totalCost, credit: 0, balance: totalCost, moveId: journalMove.id, accountId: cogsAccount.id }
-    });
-    // قيد المخزون (دائن بقيمة التكلفة)
-    await tx.journalLine.create({
-      data: { name: `خروج بضاعة من المخزن لفاتورة ${sequenceName}`, debit: 0, credit: totalCost, balance: -totalCost, moveId: journalMove.id, accountId: invAccount.id }
-    });
-
-    // 9. تحديث الأرصدة التراكمية في شجرة الحسابات
-    await tx.account.update({ where: { id: customerAccount.id }, data: { currentBalance: { increment: totalAmount } } });
-    await tx.account.update({ where: { id: salesAccount.id }, data: { currentBalance: { decrement: totalAmount } } });
-    await tx.account.update({ where: { id: cogsAccount.id }, data: { currentBalance: { increment: totalCost } } });
-    await tx.account.update({ where: { id: invAccount.id }, data: { currentBalance: { decrement: totalCost } } });
-
     return { success: true, invoiceNumber: sequenceName };
+  });
+}
+
+// get invoice by number
+export async function getInvoiceByNumber(invoiceNumber: string) {
+  return await prisma.invoice.findFirst({
+    where: { number: invoiceNumber },
+    include: {
+      partner: true,
+      lines: {
+        include: {
+          product: true,
+        }
+      }
+    }
+  });
+}
+
+// delete invoice by number (تمت إضافة تنظيف حساب الكاش وقيد الكاش أيضاً هنا لحماية النظام)
+export async function deleteInvoiceByNumber(invoiceNumber: string) {
+  return await prisma.$transaction(async (tx) => {
+    const invoice = await tx.invoice.findFirst({
+      where: { number: invoiceNumber },
+      include: { lines: true }
+    });
+
+    if (invoice) {
+      // إرجاع المخزون
+      for (const line of invoice.lines) {
+        const stockMove = await tx.stockMove.findFirst({
+          where: { reference: invoiceNumber, productId: line.productId }
+        });
+        const warehouseId = stockMove?.sourceWarehouseId || "w-main";
+        await tx.productStock.updateMany({
+          where: { productId: line.productId, warehouseId: warehouseId },
+          data: { quantity: { increment: line.quantity } }
+        });
+      }
+
+      // تنظيف وعكس أثر قيد الكاش المرتبط بالفاتورة تماماً
+      const oldCashMoveName = `CASH/${invoiceNumber}`;
+      const cashMove = await tx.journalMove.findFirst({
+        where: { name: oldCashMoveName },
+        include: { lines: true }
+      });
+      if (cashMove) {
+        const cashLine = cashMove.lines.find(l => l.debit > 0);
+        if (cashLine) {
+          await tx.account.update({
+            where: { id: cashLine.accountId },
+            data: { currentBalance: { decrement: cashLine.debit } }
+          });
+        }
+        await tx.journalMove.delete({ where: { id: cashMove.id } });
+      }
+
+      // حذف بقية الارتباطات
+      await tx.stockMove.deleteMany({ where: { reference: invoiceNumber } });
+      await tx.invoiceLine.deleteMany({ where: { invoiceId: invoice.id } });
+      if (invoice.journalMoveId) {
+        await tx.journalMove.delete({ where: { id: invoice.journalMoveId } });
+      }
+      await tx.invoice.delete({ where: { id: invoice.id } });
+    }
+
+    return { success: true };
   });
 }

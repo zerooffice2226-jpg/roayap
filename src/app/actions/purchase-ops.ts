@@ -1,112 +1,146 @@
-
 // src/app/actions/purchase-ops.ts
 "use server"
 import { prisma } from "@/lib/prisma"
 
-interface PurchaseInput {
-  vendorId: string;
-  dueDate: string;
-  warehouseId: string; // المخزن المختار لاستلام التوريد
-  items: { productId: string; quantity: number; priceUnit: number }[];
-}
-
-export async function createAndPostPurchaseBill(data: PurchaseInput) {
+export async function createAndPostPurchaseBill(data: any) {
   return await prisma.$transaction(async (tx) => {
-    const currentYear = new Date().getFullYear();
     const today = new Date();
-    
-    // 1. حساب الإجمالي وتجهيز السطور
+    const currentYear = today.getFullYear();
+
+    // 1. حساب الإجمالي وتجهيز البنود بدقة لـ InvoiceLine
     let totalAmount = 0;
-    const billLines = data.items.map(item => {
-      const subtotal = item.quantity * item.priceUnit;
+    const billLines = data.items.map((item: any) => {
+      const subtotal = Number(item.quantity) * Number(item.priceUnit);
       totalAmount += subtotal;
-      return { productId: item.productId, quantity: item.quantity, priceUnit: item.priceUnit, subtotal };
+      return { 
+        productId: item.productId, 
+        quantity: Number(item.quantity), 
+        priceUnit: Number(item.priceUnit), 
+        subtotal 
+      };
     });
 
-    // 2. جلب الحسابات والدفاتر أو تأسيسها تلقائياً كـ Odoo Fallback Strategy
+    // 2. جلب أو تأسيس الدفتر المالي للمشتريات (Journal Entry)
     let journal = await tx.journal.findFirst({ where: { type: "PURCHASE" } });
-    if (!journal) {
-      // تأسيس دفتر المشتريات فوراً في حال عدم وجوده
-      journal = await tx.journal.create({
-        data: { name: "دفتر يومية المشتريات", code: "BILL", type: "PURCHASE" }
+    if (!journal) journal = await tx.journal.create({ data: { name: "دفتر المشتريات الواردة", code: "BILL", type: "PURCHASE" } });
+
+    // 3. التحقق هل الحركة تعديل لفاتورة قائمة أم إنشاء مستند جديد
+    let sequenceName = data.existingNumber;
+    let journalMoveId;
+
+    if (data.existingNumber) {
+      // إذا كان تعديلاً، ننظف السطور القديمة أولاً من المخزن والداتا بيز لمنع التضارب
+      const oldBill = await tx.invoice.findFirst({ where: { number: data.existingNumber }, include: { lines: true } });
+      if (oldBill) {
+        for (const line of oldBill.lines) {
+          const relatedMove = await tx.stockMove.findFirst({ where: { reference: data.existingNumber, productId: line.productId } });
+          const whId = relatedMove?.destWarehouseId || data.warehouseId;
+          await tx.productStock.updateMany({
+            where: { productId: line.productId, warehouseId: whId },
+            data: { quantity: { decrement: line.quantity } } // سحب الزيادة القديمة
+          });
+        }
+        await tx.stockMove.deleteMany({ where: { reference: data.existingNumber } });
+        await tx.invoiceLine.deleteMany({ where: { invoiceId: oldBill.id } });
+        journalMoveId = oldBill.journalMoveId;
+      }
+    } else {
+      // توليد سيريال مشتريات جديد صريح ونظيف
+      const prefix = `${journal.code}/${currentYear}/`;
+      const lastBill = await tx.journalMove.findFirst({ where: { journalId: journal.id, name: { startsWith: prefix } }, orderBy: { name: 'desc' } });
+      let nextNum = lastBill ? parseInt(lastBill.name.split('/')[2]) + 1 : 1;
+      if (isNaN(nextNum)) nextNum = 1;
+      sequenceName = `${prefix}${String(nextNum).padStart(4, '0')}`;
+
+      // إنشاء قيد اليومية المالي الموزون في الداتا بيز
+      const journalMove = await tx.journalMove.create({
+        data: { name: sequenceName, journalId: journal.id, state: "POSTED", date: today, ref: `فاتورة مشتريات رقم ${sequenceName}` }
+      });
+      journalMoveId = journalMove.id;
+    }
+
+    // 💡 التحديث الذهبي المصلح لإنشاء الفاتورة بعد إزالة الحقل الزائد وتجنب الـ ValidationError
+    let bill;
+    if (data.existingNumber) {
+      const existingBill = await tx.invoice.findFirst({ where: { number: sequenceName } });
+      if (!existingBill) throw new Error("المستند المراد تعديله غير موجود بالدفاتر");
+      
+      bill = await tx.invoice.update({
+        where: { id: existingBill.id },
+        data: { 
+          totalAmount, 
+          dueDate: new Date(data.dueDate), 
+          partnerId: data.partnerId, 
+          lines: { create: billLines } 
+        }
+      });
+    } else {
+      bill = await tx.invoice.create({
+        data: {
+          number: sequenceName,
+          type: "IN_INVOICE",
+          date: today,
+          dueDate: new Date(data.dueDate),
+          state: "POSTED", // الاعتماد الكلي على حقل الـ state المعرّف بنظامك
+          partnerId: data.partnerId,
+          totalAmount,
+          journalMoveId: journalMoveId,
+          lines: { create: billLines }
+        }
       });
     }
 
-    let vendorAccount = await tx.account.findUnique({ where: { code: "210101" } });
-    if (!vendorAccount) {
-      // تأسيس حساب الموردين (خصوم) تلقائياً في شجرة الحسابات
-      vendorAccount = await tx.account.create({
-        data: { code: "210101", name: "حساب الموردين (الدائنون)", type: "LIABILITY" }
-      });
-    }
-
-    let inventoryAccount = await tx.account.findUnique({ where: { code: "110401" } });
-    if (!inventoryAccount) {
-      // تأسيس حساب أصول المخزن (أصول) تلقائياً في شجرة الحسابات
-      inventoryAccount = await tx.account.create({
-        data: { code: "110401", name: "حساب مخزن بضائع بغرض البيع", type: "ASSET" }
-      });
-    }
-
-    // 3. توليد السيريال الفريد للفاتورة
-    const prefix = `${journal.code}/${currentYear}/`;
-    const lastBill = await tx.journalMove.findFirst({
-      where: { journalId: journal.id, name: { startsWith: prefix } },
-      orderBy: { name: 'desc' },
-      select: { name: true }
-    });
-    let nextNum = 1;
-    if (lastBill) {
-      const parts = lastBill.name.split('/');
-      nextNum = parseInt(parts[parts.length - 1], 10) + 1;
-    }
-    const sequenceName = `${prefix}${String(nextNum).padStart(4, '0')}`;
-
-    // 4. إنشاء رأس القيد المالي
-    const journalMove = await tx.journalMove.create({
-      data: { name: sequenceName, journalId: journal.id, state: "POSTED", date: today, ref: `فاتورة مشتريات واردة رقم ${sequenceName}` }
-    });
-
-    // 5. إنشاء مستند الفاتورة المعتمدة
-    await tx.invoice.create({
-      data: { number: sequenceName, type: "IN_INVOICE", date: today, dueDate: new Date(data.dueDate), state: "POSTED", partnerId: data.vendorId, totalAmount, journalMoveId: journalMove.id, lines: { create: billLines } }
-    });
-
-    // سطر القيد المالي للمورد (دائن) باستخدام الـ UUID الحقيقي
-    await tx.journalLine.create({
-      data: { name: `استحقاق مورد عن فاتورة ${sequenceName}`, debit: 0, credit: totalAmount, balance: -totalAmount, moveId: journalMove.id, accountId: vendorAccount.id, partnerId: data.vendorId }
-    });
-
-    // 6. معالجة وحقن المخازن والحركات (تحديث حقيقي ومضمون)
+    // 5. 💡 تحديث وزيادة المخزون الفعلي (increment) وتوليد سجل حركات كشف حساب الصنف (StockMove) حياً
     for (const item of data.items) {
-      const product = await tx.product.findUnique({ where: { id: item.productId } });
-      if (!product) throw new Error("المنتج غير موجود في المستودع");
+      const targetWarehouse = data.warehouseId;
+      if (!targetWarehouse) throw new Error("يرجى اختيار مستودع الاستلام الفعلي للفاتورة");
 
-      const itemSubtotal = item.quantity * item.priceUnit;
-
-      // زيادة الجرد الفعلي للمخزن المختار بـ ProductStock
+      // أ. زيادة رصيد الرف في المستودع المختار فوراً
       await tx.productStock.upsert({
-        where: { productId_warehouseId: { productId: product.id, warehouseId: data.warehouseId } },
-        update: { quantity: { increment: item.quantity } },
-        create: { productId: product.id, warehouseId: data.warehouseId, quantity: item.quantity }
+        where: { productId_warehouseId: { productId: item.productId, warehouseId: targetWarehouse } },
+        update: { quantity: { increment: Number(item.quantity) } }, 
+        create: { productId: item.productId, warehouseId: targetWarehouse, quantity: Number(item.quantity) }
       });
 
-      // تسجيل مستند الحركة المخزنية الواردة بشكل رسمي
+      // ب. إنشاء حركة مخزنية رسمية مربوطة بالموّرد ليظهر اسمه حياً بكشف الحركة والتفاصيل الشجرية
       await tx.stockMove.create({
-        data: { reference: sequenceName, type: "INCOMING", quantity: item.quantity, unitCost: item.priceUnit, productId: product.id, destWarehouseId: data.warehouseId, partnerId: data.vendorId }
+        data: { 
+          reference: sequenceName, 
+          type: "INCOMING", // حركة وارد مخزني تزيد رصيد بطاقة الصنف
+          quantity: Number(item.quantity), 
+          unitCost: Number(item.priceUnit), 
+          productId: item.productId, 
+          destWarehouseId: targetWarehouse,
+          partnerId: data.partnerId // 💡 ربط الحركة بالموّرد لتجنب ظهور "عميل نقدي"
+        }
       });
-
-      // سطر قيد أصل المخزن (مدين) بالـ UUID الحقيقي
-      await tx.journalLine.create({
-        data: { name: `تزويد أصل المخزن لمنتج: ${product.name}`, debit: itemSubtotal, credit: 0, balance: itemSubtotal, moveId: journalMove.id, accountId: inventoryAccount.id }
-      });
-
-      // تحديث أرصدة شجرة الحسابات اللحظية
-      await tx.account.update({ where: { id: inventoryAccount.id }, data: { currentBalance: { increment: itemSubtotal } } });
     }
-
-    await tx.account.update({ where: { id: vendorAccount.id }, data: { currentBalance: { decrement: totalAmount } } });
 
     return { success: true, billNumber: sequenceName };
+  });
+}
+
+export async function getBillByNumber(billNumber: string) {
+  return await prisma.invoice.findFirst({
+    where: { number: billNumber, type: "IN_INVOICE" },
+    include: { lines: { include: { product: true } }, partner: true }
+  });
+}
+
+export async function deleteBillByNumber(billNumber: string) {
+  return await prisma.$transaction(async (tx) => {
+    const bill = await tx.invoice.findFirst({ where: { number: billNumber }, include: { lines: true } });
+    if (!bill) throw new Error("المستند غير موجود");
+
+    for (const line of bill.lines) {
+      const relatedMove = await tx.stockMove.findFirst({ where: { reference: billNumber, productId: line.productId } });
+      const whId = relatedMove?.destWarehouseId || "w-main";
+      await tx.productStock.updateMany({ where: { productId: line.productId, warehouseId: whId }, data: { quantity: { decrement: line.quantity } } });
+    }
+
+    await tx.stockMove.deleteMany({ where: { reference: billNumber } });
+    await tx.invoiceLine.deleteMany({ where: { invoiceId: bill.id } });
+    await tx.invoice.delete({ where: { id: bill.id } });
+    return { success: true };
   });
 }

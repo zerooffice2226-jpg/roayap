@@ -1,174 +1,101 @@
 // src/app/dashboard/partners/ledger/page.tsx
 "use client"
 import React, { useState, useEffect } from "react"
-import { getPartnerDetailedLedger } from "@/app/actions/partner-ledger-ops"
-import { getPartners } from "@/app/actions/partner-ops"
-import { FileSpreadsheet, Printer, UserCheck, ArrowLeftRight, CreditCard, Loader } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { getCustomersSummaryReport } from "@/app/actions/customer-ledger-ops"
+import { Users, Search, ChevronLeft, Barcode } from "lucide-react"
 
-type Partner = {
-    id: string;
-    name: string;
-    type: 'CUSTOMER' | 'VENDOR';
-}
-
-type LedgerData = {
-    partnerName: string;
-    partnerType: 'CUSTOMER' | 'VENDOR';
-    totalDebit: number;
-    totalCredit: number;
-    finalBalance: number;
-    rows: { 
-        id: string; 
-        date: string; 
-        moveName: string; 
-        label: string; 
-        debit: number; 
-        credit: number; 
-        cumulativeBalance: number 
-    }[];
-}
-
-export default function PartnerLedgerPage() {
-  const [partners, setPartners] = useState<Partner[]>([])
-  const [selectedPartnerId, setSelectedPartnerId] = useState("")
-  const [ledgerData, setLedgerData] = useState<LedgerData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null);
+export default function CustomersSummaryLedgerPage() {
+  const router = useRouter()
+  const [reportData, setReportData] = useState<any[]>([])
+  const [search, setSearch] = useState("")
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    getPartners()
-      .then(setPartners)
-      .catch(() => {
-        setError("فشل في تحميل قائمة الشركاء. قد تكون هناك مشكلة في الاتصال.");
-      });
+    setLoading(true);
+    // 💡 الاتصال الحقيقي القاطع: جلب الأرصدة وتصفير الداتا الوهمية تماماً
+    getCustomersSummaryReport()
+      .then(res => {
+        setReportData(res.reportData || []);
+      })
+      .catch((err) => {
+        console.error("فشل الاتصال بجداول العملاء السحابية:", err);
+        setReportData([]); // تفريغ الجدول تماماً في حالة المسح ليعكس الحقيقة
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    if (!selectedPartnerId) {
-      setLedgerData(null);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setLedgerData(null);
-    getPartnerDetailedLedger(selectedPartnerId)
-      .then(res => setLedgerData(res as LedgerData))
-      .catch(err => setError(err.message || "حدث خطأ غير متوقع أثناء جلب كشف الحساب."))
-      .finally(() => setLoading(false));
-  }, [selectedPartnerId]);
-  
-  const isCustomerAndOwing = ledgerData?.partnerType === 'CUSTOMER' && ledgerData?.finalBalance > 0;
-  const isVendorAndOwed = ledgerData?.partnerType === 'VENDOR' && ledgerData?.finalBalance > 0;
+  const filteredData = reportData.filter(c => 
+    c.name?.toLowerCase().includes(search.toLowerCase()) || c.phone?.includes(search)
+  );
 
   return (
     <div className="p-8 bg-slate-50 min-h-screen font-sans" dir="rtl">
-      
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 border-b pb-4">
+      <div className="flex justify-between items-center mb-8 border-b pb-4">
         <div>
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet className="text-slate-900" size={24} />
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">كشف حساب الشركاء (Partner Ledger)</h1>
-          </div>
-          <p className="text-slate-500 text-xs mt-1">تتبع كشوفات الحركات المالية التاريخية والرصيد المتحرك لكل عميل أو مورد</p>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Users className="text-purple-600" size={24} />
+            دفتر أستاذ أرصدة ومطابقات العملاء المجمع حياً
+          </h1>
+          <p className="text-slate-500 text-xs mt-0.5">النظام متصل حياً بـ Supabase: قراءة الأرصدة والمديونيات الفعلية المحدثة للشركاء [Odoo 18]</p>
         </div>
-        {ledgerData && (
-          <button onClick={() => window.print()} className="flex items-center gap-1.5 bg-white border text-slate-700 font-semibold text-xs px-4 py-2 rounded-xl shadow-sm hover:bg-slate-50 transition-colors">
-            <Printer size={14} />
-            طباعة كشف الحساب (PDF)
-          </button>
-        )}
       </div>
 
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/60 mb-6 max-w-xl mx-auto">
-        <label className="block text-sm font-bold text-slate-700 mb-2 text-center">اختر العميل أو المورد لعرض كشف حسابه</label>
-        <select 
-          value={selectedPartnerId} 
-          onChange={(e) => setSelectedPartnerId(e.target.value)} 
-          className="w-full p-3 bg-slate-100 border-slate-200 border rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 transition-all"
-        >
-          <option value="">--- اختر من القائمة ---</option>
-          {partners.map(p => (
-            <option key={p.id} value={p.id}>{p.name} ({p.type === 'CUSTOMER' ? 'عميل' : 'مورد'})</option>
-          ))}
-        </select>
+      <div className="bg-white border rounded-xl p-3 flex items-center gap-2 max-w-md text-xs mb-6 shadow-sm">
+        <Search size={14} className="text-slate-400" />
+        <input type="text" placeholder="ابحث بكتابة اسم العميل أو الهاتف لفرز الأرصدة..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-transparent focus:outline-none font-semibold text-slate-700" />
       </div>
 
-      {loading && (
-          <div className="text-center p-12 text-slate-500 text-sm">
-              <div className="flex flex-col items-center gap-2">
-                  <Loader className="animate-spin" size={28} />
-                  <span>جاري احتساب السجل التاريخي للحركات...</span>
-              </div>
-          </div>
-      )}
-      {error && <div className="bg-rose-100 text-rose-700 text-sm font-bold p-4 rounded-xl text-center max-w-xl mx-auto">{error}</div>}
-
-      {ledgerData && !loading && (
-        <div className="space-y-6">
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white p-4 border rounded-xl shadow-sm flex items-center justify-between">
-                <div>
-                    <span className="text-xs font-bold text-slate-500 block mb-0.5">إجمالي حركات مدين (+)</span>
-                    <span className="font-mono text-lg font-black text-slate-900">{ledgerData.totalDebit.toLocaleString('ar-EG', { style: 'currency', currency: 'EGP' })}</span>
-                </div>
-                <div className="p-3 bg-slate-100 text-slate-600 rounded-lg"><ArrowLeftRight size={18} /></div>
-            </div>
-            <div className="bg-white p-4 border rounded-xl shadow-sm flex items-center justify-between">
-                <div>
-                    <span className="text-xs font-bold text-slate-500 block mb-0.5">إجمالي حركات دائن (-)</span>
-                    <span className="font-mono text-lg font-black text-slate-900">{ledgerData.totalCredit.toLocaleString('ar-EG', { style: 'currency', currency: 'EGP' })}</span>
-                </div>
-                <div className="p-3 bg-slate-100 text-slate-600 rounded-lg"><CreditCard size={18} /></div>
-            </div>
-            <div className={`p-4 border-2 rounded-xl shadow-lg flex items-center justify-between ${isCustomerAndOwing ? 'bg-blue-600/10 border-blue-300' : isVendorAndOwed ? 'bg-amber-600/10 border-amber-300' : 'bg-emerald-600/10 border-emerald-300'}`}>
-                <div>
-                    <span className={`text-xs font-bold block mb-0.5 ${isCustomerAndOwing ? 'text-blue-800' : isVendorAndOwed ? 'text-amber-800' : 'text-emerald-800'}`}>
-                        {isCustomerAndOwing ? 'رصيد مستحق على العميل' : isVendorAndOwed ? 'رصيد مستحق للمورد' : 'الرصيد الختامي'}
-                    </span>
-                    <span className={`font-mono text-lg font-black ${isCustomerAndOwing ? 'text-blue-700' : isVendorAndOwed ? 'text-amber-700' : 'text-emerald-700'}`}>
-                        {ledgerData.finalBalance.toLocaleString('ar-EG', { style: 'currency', currency: 'EGP' })}
-                    </span>
-                </div>
-                <div className="p-3 bg-white rounded-lg border text-slate-700"><UserCheck size={18} /></div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-x-auto">
-            <table className="w-full text-right border-collapse">
-              <thead>
-                <tr className="bg-slate-100 border-b border-slate-200/80 text-xs font-bold text-slate-600 uppercase tracking-wider">
-                  <th className="p-4">التاريخ</th>
-                  <th className="p-4">رقم الحركة</th>
-                  <th className="p-4">البيان</th>
-                  <th className="p-4 text-left">مدين</th>
-                  <th className="p-4 text-left">دائن</th>
-                  <th className="p-4 text-left bg-slate-200/70 border-r">الرصيد المتحرك</th>
+      <div className="bg-white border rounded-2xl shadow-sm overflow-hidden text-xs">
+        <table className="w-full text-right border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b text-slate-500 font-bold">
+              <th className="p-4">اسم العميل / الشريك التجاري</th>
+              <th className="p-4">رقم الهاتف</th>
+              <th className="p-4 text-left text-slate-900 bg-rose-50/20">إجمالي مبيعاته (مدين +)</th>
+              <th className="p-4 text-left text-emerald-800 bg-emerald-50/20">إجمالي مدفوعاته (دائن -)</th>
+              <th className="p-4 text-center">الرصيد الصافي الجاري</th>
+              <th className="p-4 text-center">طبيعة الرصيد</th>
+              <th className="p-4 text-center">الإجراء</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-slate-700 font-semibold font-mono">
+            {loading ? (
+              <tr><td colSpan={7} className="p-12 text-center text-slate-400 font-sans animate-pulse">جاري سحب مطابقات أرصدة العملاء الحية من قاعدة البيانات...</td></tr>
+            ) : filteredData.length > 0 ? (
+              filteredData.map((item) => (
+                <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                  <td className="p-4 text-sm font-black text-slate-800 font-sans">{item.name}</td>
+                  <td className="p-4 text-slate-500 font-sans">{item.phone}</td>
+                  <td className="p-4 text-left text-rose-600 bg-rose-50/10">{item.debit.toLocaleString()} ج.م</td>
+                  <td className="p-4 text-left text-emerald-600 bg-emerald-50/10">{item.credit.toLocaleString()} ج.م</td>
+                  <td className="p-4 text-center text-slate-900 font-black text-sm">{item.balance.toLocaleString()} ج.م</td>
+                  <td className="p-4 text-center">
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
+                      item.balanceType === 'مدين' ? 'bg-rose-50 text-rose-700' : item.balanceType === 'دائن' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
+                    }`}>{item.balanceType}</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <button 
+                      type="button"
+                      onClick={() => router.push(`/dashboard/partners/ledger/detail?partnerId=${item.id}`)}
+                      className="text-[10px] font-black bg-slate-950 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-purple-600 mx-auto transition-colors font-sans cursor-pointer shadow-sm"
+                    >
+                      كشف الحساب التفصيلي <ChevronLeft size={10} />
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                {ledgerData.rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="p-4 font-mono text-slate-500 whitespace-nowrap">{row.date}</td>
-                    <td className="p-4 font-mono font-bold text-slate-800">{row.moveName}</td>
-                    <td className="p-4 font-medium text-slate-600 max-w-xs truncate">{row.label}</td>
-                    <td className="p-4 font-mono font-bold text-left text-emerald-600 whitespace-nowrap">
-                      {row.debit > 0 ? row.debit.toLocaleString('ar-EG', { style: 'currency', currency: 'EGP' }) : "—"}
-                    </td>
-                    <td className="p-4 font-mono font-bold text-left text-rose-500 whitespace-nowrap">
-                      {row.credit > 0 ? row.credit.toLocaleString('ar-EG', { style: 'currency', currency: 'EGP' }) : "—"}
-                    </td>
-                    <td className={`p-4 font-mono font-black text-left border-r bg-slate-100/50 whitespace-nowrap ${row.cumulativeBalance >= 0 ? 'text-blue-700' : 'text-amber-700'}`}>
-                      {row.cumulativeBalance.toLocaleString('ar-EG', { style: 'currency', currency: 'EGP' })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+              ))
+            ) : (
+              <tr>
+                <td colSpan={7} className="p-12 text-center text-slate-400 font-sans font-bold">
+                  ⚠️ قاعدة البيانات فارغة تماماً؛ لا توجد أرصدة أو حسابات عملاء مسجلة حالياً بالمنظومة السحابية.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
