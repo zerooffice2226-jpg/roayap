@@ -1,5 +1,6 @@
 // src/app/dashboard/accounting/cash-receipt/page.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useState, useEffect, useRef } from "react"
 import { getPartners } from "@/app/actions/partner-ops"
 import { getExpenseAccounts, postCashTransaction, getLiquidAccounts } from "@/app/actions/cash-receipt-ops"

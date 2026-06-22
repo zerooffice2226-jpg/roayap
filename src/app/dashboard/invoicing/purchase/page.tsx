@@ -1,5 +1,6 @@
 // src/app/dashboard/invoicing/purchase/page.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createAndPostPurchaseBill, getBillByNumber, deleteBillByNumber } from "@/app/actions/purchase-ops"

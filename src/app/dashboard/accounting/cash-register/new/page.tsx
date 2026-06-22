@@ -1,5 +1,6 @@
 // src/app/dashboard/accounting/cash-register/new/page.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { getNextAccountCode, createLiquidAccount } from "@/app/actions/liquid-account-ops"

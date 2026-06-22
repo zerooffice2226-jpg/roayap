@@ -1,5 +1,6 @@
 // src/app/dashboard/products/new/page.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation";
 import { createNewProduct } from "@/app/actions/product-ops"

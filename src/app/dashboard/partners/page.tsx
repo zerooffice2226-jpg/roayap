@@ -1,5 +1,6 @@
 // src/app/dashboard/partners/page.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useState, useEffect, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation";
 import { createPartner, getPartners } from "@/app/actions/partner-ops"

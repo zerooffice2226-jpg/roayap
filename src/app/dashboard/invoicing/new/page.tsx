@@ -1,5 +1,6 @@
 // src/app/dashboard/invoicing/new/page.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createAndPostInvoice, getInvoiceByNumber, deleteInvoiceByNumber } from "@/app/actions/invoicing-ops"
@@ -308,6 +309,20 @@ export default function NewInvoicePage() {
             {isViewMode && (
                 <div className="flex gap-2 text-xs font-bold">
                     <button type="button" onClick={handleDuplicateInvoice} className="flex items-center gap-1 bg-white border p-2.5 rounded-xl shadow-sm"><Copy size={13} /> نسخ</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const currentInvNum = searchParams.get("viewInvoice");
+                        if (currentInvNum) {
+                          router.push(`/dashboard/invoicing/sales-return?autoFetchInv=${currentInvNum}`);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl shadow-md cursor-pointer transition-all font-bold text-xs"
+                      title="إصدار مستند مرتجع مبيعات فوري لهذه الفاتورة"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 3.89L21 4.1" /></svg>
+                      <span>إصدار مرتجع (Sales Return)</span>
+                    </button>
                     {isFieldsFrozen && <button type="button" onClick={handleEnableEdit} className="flex items-center gap-1 bg-white border p-2.5 rounded-xl shadow-sm"><Edit3 size={13} /> تعديل</button>}
                     <button type="button" onClick={handleCancelAndDelete} className="flex items-center gap-1 bg-rose-50 text-rose-700 border p-2.5 rounded-xl shadow-sm"><Trash2 size={13} /> حذف</button>
                 </div>

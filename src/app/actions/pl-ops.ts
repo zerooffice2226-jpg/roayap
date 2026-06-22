@@ -15,7 +15,7 @@ export async function getProfitAndLossReport() {
     accounts.forEach(account => {
       if (account.currentBalance === 0) return; // Skip accounts with no balance
 
-      if (account.type === "INCOME" || account.type === "REVENUE") { // REVENUE for schema v1 compatibility
+      if (account.type === "INCOME") {
         // الإيراد بطبيعته دائن، وفي نظامنا رصيده ينمو بالزيادة (موجب) ليمثل الرصيد الدائن
         const balance = account.currentBalance;
         totalIncome += balance;
@@ -24,7 +24,7 @@ export async function getProfitAndLossReport() {
           name: account.name,
           balance: balance
         });
-      } else if (account.type === "EXPENSE" || account.type === "COGS") { // COGS for schema v1 compatibility
+      } else if (account.type === "EXPENSE") {
         // المصروف بطبيعته مدين، وفي نظامنا رصيده ينمو بالزيادة (موجب) ليمثل الرصيد المدين
         const balance = account.currentBalance;
         totalExpense += balance;

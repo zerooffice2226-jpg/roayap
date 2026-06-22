@@ -1,5 +1,6 @@
 // src/app/dashboard/main/page.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"

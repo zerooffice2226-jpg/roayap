@@ -1,6 +1,8 @@
 'use client'
+export const dynamic = 'force-dynamic'
 
 import React, { useState, useEffect } from "react"
+import Link from "next/link"
 import { getAccountTree } from "@/app/actions/accounts"
 import { Folder, FolderOpen, FileText, ChevronLeft, ChevronDown, Plus } from "lucide-react"
 import { Account } from "@/lib/definitions";
@@ -88,11 +90,14 @@ export default function AccountTreeView() {
 
   return (
     <div className="p-8 bg-slate-50 min-h-screen" dir="rtl">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">دليل الحسابات (Chart of Accounts)</h1>
-          <p className="text-slate-500 text-xs mt-1">الهيكلة الشجرية الكاملة للأصول واللتزامات والمصروفات</p>
+          <p className="text-slate-500 text-xs mt-1">الهيكلة الشجرية الكاملة للأصول والالتزامات والمصروفات</p>
         </div>
+        <Link href="/dashboard/accounts/new" className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 text-white px-4 py-3 text-sm font-bold shadow-sm hover:bg-slate-800 transition">
+          <Plus size={16} /> إضافة حساب جديد
+        </Link>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden">

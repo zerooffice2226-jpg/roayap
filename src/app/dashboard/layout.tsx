@@ -1,5 +1,6 @@
 // src/app/dashboard/layout.tsx
 "use client"
+export const dynamic = 'force-dynamic'
 import React, { useState, useEffect } from "react"
 import SideNav from "@/app/components/SideNav"
 import { motion } from "framer-motion"

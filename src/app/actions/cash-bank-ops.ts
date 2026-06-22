@@ -38,8 +38,7 @@ export async function createCashBankJournal(data: NewCashBankInput) {
       data: {
         name: data.name,
         code: data.code,
-        type: data.type,
-        defaultAccountId: newAccount.id
+        type: data.type
       }
     });
 
@@ -54,12 +53,11 @@ export async function createCashBankJournal(data: NewCashBankInput) {
 export async function getCashBankLedgerReport(journalId: string) {
   
   const journal = await prisma.journal.findUnique({ where: { id: journalId }});
-  if(!journal || !journal.defaultAccountId) throw new Error('دفتر اليومية غير موجود')
+  if(!journal) throw new Error('دفتر اليومية غير موجود')
   
   // جلب كافة أسطر القيود المرتبطة بهذا الدفتر والمرحلة فقط
   const lines = await prisma.journalLine.findMany({
     where: {
-        accountId: journal.defaultAccountId,
         move: {
             state: "POSTED"
         }
