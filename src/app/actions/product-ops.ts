@@ -7,32 +7,82 @@ interface NewProductFlexibleInput {
   sku: string;
   salePrice: number;
   costPrice: number;
-  currentStock: number;       // الرصيد الافتتاحي
-  warehouseId?: string;       // المخزن المختار (اختياري)
-  incomeAccountId: string;
-  expenseAccountId: string;
+  currentStock: number;
+  warehouseId?: string;
+  incomeAccountId?: string;
+  expenseAccountId?: string;
+}
+
+async function getDefaultAccounts(tx: any) {
+  const incomeAccount = await tx.account.findFirst({
+    where: {
+      OR: [
+        { code: "410101" },
+        { code: "410000" },
+        { name: { contains: "إيرادات المبيعات" } }
+      ]
+    }
+  }) || await tx.account.findFirst({
+    where: { type: "INCOME" }
+  });
+
+  const expenseAccount = await tx.account.findFirst({
+    where: {
+      OR: [
+        { code: "510101" },
+        { code: "510000" },
+        { name: { contains: "تكلفة البضاعة" } },
+        { name: { contains: "COGS" } }
+      ]
+    }
+  }) || await tx.account.findFirst({
+    where: { type: "EXPENSE" }
+  });
+
+  return { incomeAccount, expenseAccount };
 }
 
 export async function createNewProduct(data: NewProductFlexibleInput) {
   return await prisma.$transaction(async (tx) => {
     
-    // 1. التحقق من عدم تكرار الباركود (SKU) لحماية النزاهة
     const existingProduct = await tx.product.findUnique({
       where: { sku: data.sku }
     });
     if (existingProduct) throw new Error("باركود المنتج (SKU) مسجل مسبقاً في النظام");
 
-    // 2. بناء كود الإنشاء الأساسي لبطاقة المنتج محاسبياً
+    const { incomeAccount: defaultIncome, expenseAccount: defaultExpense } = await getDefaultAccounts(tx);
+
+    let incomeAccount = null;
+    if (data.incomeAccountId) {
+      incomeAccount = await tx.account.findUnique({ where: { id: data.incomeAccountId } });
+    }
+    if (!incomeAccount) {
+      incomeAccount = defaultIncome;
+    }
+    if (!incomeAccount) {
+      throw new Error("لا يوجد حساب إيرادات المبيعات! يرجى إنشاء حساب (410101)");
+    }
+
+    let expenseAccount = null;
+    if (data.expenseAccountId) {
+      expenseAccount = await tx.account.findUnique({ where: { id: data.expenseAccountId } });
+    }
+    if (!expenseAccount) {
+      expenseAccount = defaultExpense;
+    }
+    if (!expenseAccount) {
+      throw new Error("لا يوجد حساب تكلفة البضاعة المباعة! يرجى إنشاء حساب (510101)");
+    }
+
     const productData: any = {
       name: data.name,
       sku: data.sku,
       salePrice: data.salePrice,
       costPrice: data.costPrice,
-      incomeAccountId: data.incomeAccountId,
-      expenseAccountId: data.expenseAccountId,
+      incomeAccountId: incomeAccount.id,
+      expenseAccountId: expenseAccount.id,
     };
 
-    // 3. سياسة أودو المرنة: إذا وجد رصيد افتتاحي ومخزن محدد، يتم الربط فوراً
     if (data.currentStock > 0 && data.warehouseId) {
       productData.stockBalances = {
         create: {
@@ -42,12 +92,8 @@ export async function createNewProduct(data: NewProductFlexibleInput) {
       };
     }
 
-    // 4. إنشاء المنتج سحابياً في Supabase
-    const product = await tx.product.create({
-      data: productData
-    });
+    const product = await tx.product.create({ data: productData });
 
-    // 5. إذا كان هناك رصيد افتتاحي، نسجل حركة مخزنية واردة (INCOMING) للتاريخ والتدقيق
     if (data.currentStock > 0 && data.warehouseId) {
       await tx.stockMove.create({
         data: {
@@ -61,15 +107,21 @@ export async function createNewProduct(data: NewProductFlexibleInput) {
       });
     }
 
-    return { success: true, product };
+    return { 
+      success: true, 
+      product,
+      message: `✅ تم إنشاء المنتج!\n- الإيراد: ${incomeAccount.name} (${incomeAccount.code})\n- التكلفة: ${expenseAccount.name} (${expenseAccount.code})`
+    };
   });
 }
 
+// ✅ دلوقتي العلاقات شغالة بدون as any
 export async function getProducts() {
-  // 💡 التعديل المحوري لضم أرقام الجرد الفعلي للمخازن المتعددة
   return await prisma.product.findMany({
     include: {
-      stockBalances: true // ضم كميات الجرد الموزعة في المخازن لكل صنف
+      stockBalances: true,
+      incomeAccount: true,
+      expenseAccount: true
     },
     orderBy: { createdAt: "desc" }
   });

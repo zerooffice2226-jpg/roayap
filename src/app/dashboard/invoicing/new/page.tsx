@@ -41,10 +41,10 @@ export default function NewInvoicePage() {
   const inputRefs = useRef<any[]>([])
 
   // 💡 حقول تتبع حاسبة الكاشير اللحظية
-  const [amountPaid, setAmountPaid] = useState<string>("") // المبلغ المستلم من العميل
   const [amountChange, setAmountChange] = useState<number>(0) // الباقي المستحق للعميل
   const [cashAccounts, setCashAccounts] = useState<any[]>([]) // مصفوفة الخزائن الحية
   const [selectedCashAccount, setSelectedCashAccount] = useState("") // الخزينة المختارة للكاشير
+  const [amountPaid, setAmountPaid] = useState<string>("") // المبلغ المدفوع
 
   // State for new printing logic
   const [invoiceData, setInvoiceData] = useState<any>(null);
@@ -267,6 +267,7 @@ export default function NewInvoicePage() {
         warehouseId, 
         items, 
         cashAccountId: selectedCashAccount, 
+        amountPaid: amountPaid || 0, // ✅ أضف المبلغ المدفوع
         existingNumber: isEditAction ? searchParams.get("viewInvoice") : undefined 
       });
       
@@ -446,12 +447,11 @@ export default function NewInvoicePage() {
                 <div className="border-l border-slate-800 pl-2">
                   <label className="block text-[10px] text-slate-400 font-bold mb-1">صندوق / خزينة الاستلام الفوري *</label>
                   <select 
-                    required
-                    value={selectedCashAccount}
-                    onChange={(e) => setSelectedCashAccount(e.target.value)}
+                    value={selectedCashAccount || ""}
+                    onChange={(e) => setSelectedCashAccount(e.target.value || "")}
                     className="w-full p-2 bg-slate-800 border border-slate-700 rounded-xl font-black text-white focus:outline-none cursor-pointer"
                   >
-                    <option value="">-- حدد خزينة الكاشير --</option>
+                    <option value="">-- حدد خزينة الكاشير (اختياري) --</option>
                     {cashAccounts.map(acc => (
                       <option key={acc.id} value={acc.id} className="bg-slate-900 text-white font-bold">{acc.name}</option>
                     ))}
@@ -464,11 +464,14 @@ export default function NewInvoicePage() {
                 </div>
 
                 <div className="border-l border-slate-800 pl-2">
-                  <label className="block text-[10px] text-slate-400 font-bold mb-1">المبلغ المدفوع من الزبون (المدفوع) *</label>
+                  <label className="block text-[10px] text-slate-400 font-bold mb-1">
+                    المبلغ المدفوع (اختياري)
+                  </label>
                   <div className="relative flex items-center bg-slate-800 rounded-xl px-2.5 border border-slate-700">
                     <input 
                       type="number" 
                       min="0"
+                      max={totalAmount}
                       placeholder="0.00" 
                       value={amountPaid} 
                       onChange={(e) => setAmountPaid(e.target.value)} 
@@ -476,6 +479,11 @@ export default function NewInvoicePage() {
                     />
                     <span className="text-[10px] text-slate-500 font-sans mr-1">ج.م</span>
                   </div>
+                  {parseFloat(amountPaid || "0") > 0 && parseFloat(amountPaid) < totalAmount && (
+                    <p className="text-[9px] text-amber-400 mt-1">
+                      ⚠️ المتبقي على الذمم: {(totalAmount - parseFloat(amountPaid)).toLocaleString()} ج.م
+                    </p>
+                  )}
                 </div>
 
                 <div className="text-left md:text-left pr-2 md:mr-auto">

@@ -34,8 +34,13 @@ model Product {
   sku              String         @unique
   salePrice        Float
   costPrice        Float
+  
+  // إصلاح: ربط الحسابات بعلاقات حقيقية مع موديل الحسابات
   incomeAccountId  String
+  incomeAccount    Account        @relation("ProductIncomeAccount", fields: [incomeAccountId], references: [id])
   expenseAccountId String
+  expenseAccount   Account        @relation("ProductExpenseAccount", fields: [expenseAccountId], references: [id])
+  
   invoiceLines     InvoiceLine[]
   stockBalances    ProductStock[]
   stockMoves       StockMove[]
@@ -77,6 +82,10 @@ model Account {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   moveLines      JournalLine[]
+
+  // علاقات عكسية لحسابات المنتجات
+  incomeProducts  Product[]    @relation("ProductIncomeAccount")
+  expenseProducts Product[]    @relation("ProductExpenseAccount")
 }
 
 enum AccountType {
@@ -130,7 +139,7 @@ model JournalLine {
   name      String
   debit     Float       @default(0.0)
   credit    Float       @default(0.0)
-  balance   Float
+  // تم إزالة حقل balance لأنه يُحسب برمجياً (debit - credit) لمنع التضارب
   moveId    String
   move      JournalMove @relation(fields: [moveId], references: [id], onDelete: Cascade)
   accountId String
@@ -156,6 +165,9 @@ model Invoice {
   totalAmount   Float         @default(0.0)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  
+  // إضافة: ربط الفاتورة بحركات المخزن لمعرفة هل تم تسليمها مخزنياً أم لا
+  stockMoves    StockMove[]
 }
 
 enum InvoiceType {
@@ -197,6 +209,10 @@ model StockMove {
   destWarehouse     Warehouse?    @relation("DestWarehouse", fields: [destWarehouseId], references: [id])
   partnerId         String?
   partner           Partner?      @relation(fields: [partnerId], references: [id])
+  
+  // إضافة: ربط حركة المخزن بالفاتورة الأصلية (اختياري)
+  invoiceId         String?
+  invoice           Invoice?      @relation(fields: [invoiceId], references: [id])
 }
 
 enum StockMoveType {
@@ -219,6 +235,9 @@ model Cheque {
   journalMove   JournalMove? @relation(fields: [journalMoveId], references: [id])
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+
+  // إصلاح: جعل الرقم فريداً "فقط" على مستوى نفس البنك لمنع تشابه أرقام الشيكات في البنوك المختلفة
+  @@unique([number, bankName])
 }
 
 enum ChequeType {
